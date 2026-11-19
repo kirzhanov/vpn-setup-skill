@@ -1,0 +1,32 @@
+#!/bin/bash
+# awg-status — пиры awg0 с именами из комментариев в awg0.conf:
+# адрес, endpoint, давность хендшейка, трафик. Запускать от root.
+set -euo pipefail
+
+CONF=/etc/amnezia/amneziawg/awg0.conf
+declare -A names
+name=""
+in_peer=0
+while IFS= read -r line; do
+    case $line in
+        "[Peer]") in_peer=1; name="" ;;
+        "# "*) [ $in_peer -eq 1 ] && name=${line#\# } ;;
+        PublicKey*) if [ $in_peer -eq 1 ]; then
+                        key=${line#*=}; key=${key// /}
+                        names[$key]=${name:-?}
+                    fi ;;
+    esac
+done < "$CONF"
+
+now=$(date +%s)
+printf '%-16s %-15s %-22s %-14s %10s %10s\n' NAME ADDRESS ENDPOINT HANDSHAKE RX TX
+awg show awg0 dump | tail -n +2 | while IFS=$'\t' read -r pub _psk ep aips hs rx tx _ka; do
+    if [ "$hs" -eq 0 ]; then age="never"; else
+        d=$((now - hs))
+        if   [ $d -lt 120 ];  then age="${d}s ago"
+        elif [ $d -lt 7200 ]; then age="$((d / 60))m ago"
+        else                       age="$((d / 3600))h ago"; fi
+    fi
+    printf '%-16s %-15s %-22s %-14s %10s %10s\n' "${names[$pub]:-?}" "${aips%/32}" "$ep" "$age" \
+        "$(numfmt --to=iec "$rx")" "$(numfmt --to=iec "$tx")"
+done
